@@ -180,9 +180,18 @@
           const blob = await response.blob();
           const url = URL.createObjectURL(blob);
 
+          const disposition = response.headers.get("Content-Disposition") || "";
+          const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+          const serverName = match?.[1] || match?.[2];
+          const originalName = input.files[0].name || "document.pdf";
+          const dotIndex = originalName.lastIndexOf(".");
+          const baseName = dotIndex > 0 ? originalName.slice(0, dotIndex) : originalName;
+          const extension = dotIndex > 0 ? originalName.slice(dotIndex) : ".pdf";
+          const fallbackName = `${baseName}_dark${extension}`;
+
           const link = document.createElement("a");
           link.href = url;
-          link.download = "dark_mode.pdf";
+          link.download = serverName ? decodeURIComponent(serverName) : fallbackName;
           document.body.appendChild(link);
           link.click();
           link.remove();

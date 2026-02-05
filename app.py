@@ -6,7 +6,7 @@ from processor import invert_via_pixmap
 
 app = Flask(__name__, static_folder="public", static_url_path="")
 
-EXPECTED_TOKEN = "a06410e3c0031514891e8d1eaf0be6f20a253912"
+EXPECTED_TOKEN = "Kaeg1234"
 
 
 @app.get("/")
