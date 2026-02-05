@@ -31,9 +31,15 @@ def convert():
     if uploaded.filename == "":
         return "Arquivo inválido", 400
 
+    base_name = os.path.basename(uploaded.filename)
+    name_root, ext = os.path.splitext(base_name)
+    if not ext:
+        ext = ".pdf"
+    output_filename = f"{name_root}_dark{ext}"
+
     with tempfile.TemporaryDirectory() as temp_dir:
         input_path = os.path.join(temp_dir, "input.pdf")
-        output_path = os.path.join(temp_dir, "dark_mode.pdf")
+        output_path = os.path.join(temp_dir, output_filename)
 
         uploaded.save(input_path)
         try:
@@ -48,7 +54,7 @@ def convert():
             output_path,
             mimetype="application/pdf",
             as_attachment=True,
-            download_name="dark_mode.pdf",
+            download_name=output_filename,
         )
 
 
