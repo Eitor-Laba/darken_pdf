@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.24-bookworm AS build
+FROM golang:1.24-alpine3.21 AS build
 
 # build-base instala gcc, g++, make, etc. Essencial para CGO.
 RUN apk add --no-cache \
