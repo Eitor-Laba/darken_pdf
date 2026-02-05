@@ -1,3 +1,4 @@
+import hashlib
 import os
 import tempfile
 from flask import Flask, request, send_file, send_from_directory, abort
@@ -5,6 +6,9 @@ from flask import Flask, request, send_file, send_from_directory, abort
 from processor import invert_via_pixmap
 
 app = Flask(__name__, static_folder="public", static_url_path="")
+
+EXPECTED_TOKEN = "a06410e3c0031514891e8d1eaf0be6f20a253912"
+EXPECTED_TOKEN_SHA1 = hashlib.sha1(EXPECTED_TOKEN.encode("utf-8")).hexdigest()
 
 
 @app.get("/")
@@ -14,6 +18,14 @@ def index():
 
 @app.post("/convert")
 def convert():
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return "Token ausente", 401
+
+    token = auth_header.removeprefix("Bearer ").strip()
+    if token != EXPECTED_TOKEN_SHA1:
+        return "Token inválido", 403
+
     if "pdf" not in request.files:
         return "Arquivo PDF ausente", 400
 

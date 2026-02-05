@@ -117,6 +117,13 @@
 
       <form class="upload" id="uploadForm">
         <input type="file" id="pdfInput" name="pdf" accept="application/pdf" required />
+        <input
+          type="password"
+          id="tokenInput"
+          placeholder="Token de acesso"
+          autocomplete="off"
+          required
+        />
         <button type="submit" id="submitBtn">Converter PDF</button>
       </form>
 
@@ -129,6 +136,14 @@
       const input = document.getElementById("pdfInput");
       const status = document.getElementById("status");
       const submitBtn = document.getElementById("submitBtn");
+      const tokenInput = document.getElementById("tokenInput");
+
+      const sha1 = async (text) => {
+        const data = new TextEncoder().encode(text);
+        const hashBuffer = await crypto.subtle.digest("SHA-1", data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+      };
 
       const setStatus = (message, type = "") => {
         status.textContent = message;
@@ -143,6 +158,11 @@
           return;
         }
 
+        if (!tokenInput.value.trim()) {
+          setStatus("Informe o token de acesso.", "error");
+          return;
+        }
+
         submitBtn.disabled = true;
         setStatus("Processando...", "");
 
@@ -150,9 +170,14 @@
         data.append("pdf", input.files[0]);
 
         try {
+          const tokenHash = await sha1(tokenInput.value.trim());
+
           const response = await fetch("/convert", {
             method: "POST",
             body: data,
+            headers: {
+              Authorization: `Bearer ${tokenHash}`,
+            },
           });
 
           if (!response.ok) {
