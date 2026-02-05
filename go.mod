@@ -7,6 +7,7 @@ toolchain go1.24.13
 require (
 	github.com/gen2brain/go-fitz v1.24.15
 	github.com/signintech/gopdf v0.35.0
+	golang.org/x/image v0.26.0
 )
 
 require (

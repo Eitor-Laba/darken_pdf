@@ -14,6 +14,7 @@ import (
 
 	"github.com/gen2brain/go-fitz"
 	"github.com/signintech/gopdf"
+	xdraw "golang.org/x/image/draw"
 )
 
 func main() {
@@ -39,9 +40,20 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	tempIn, _ := os.CreateTemp("", "input-*.pdf")
+	tempIn, err := os.CreateTemp("", "input-*.pdf")
+	if err != nil {
+		http.Error(w, "Erro ao criar arquivo temporário", http.StatusInternalServerError)
+		return
+	}
 	defer os.Remove(tempIn.Name())
-	io.Copy(tempIn, file)
+	if _, err := io.Copy(tempIn, file); err != nil {
+		http.Error(w, "Erro ao salvar arquivo", http.StatusInternalServerError)
+		return
+	}
+	if err := tempIn.Close(); err != nil {
+		http.Error(w, "Erro ao finalizar arquivo", http.StatusInternalServerError)
+		return
+	}
 
 	outputBuffer, err := processAndInvert(tempIn.Name())
 	if err != nil {
@@ -66,40 +78,65 @@ func processAndInvert(tempPath string) (*bytes.Buffer, error) {
 	}
 	defer doc.Close()
 
+	// --- CONFIGURAÇÃO DE QUALIDADE ---
+	// 0.5 = Baixa (Rápido, arquivo pequeno, texto serrilhado) ~36 DPI
+	// 1.0 = Padrão (Normal, leitura ok) ~72 DPI
+	// 2.0 = Alta (Texto nítido, arquivo grande) ~144 DPI
+	// 3.0 = Impressão (Arquivo GIGANTE) ~216 DPI
+	const scaleFactor = 1.5
+	// ---------------------------------
+
 	numPages := doc.NumPage()
+	if numPages == 0 {
+		return nil, fmt.Errorf("pdf sem páginas")
+	}
 	pages := make([]image.Image, numPages)
 
-	// Canal para coletar resultados e WaitGroup para sincronia
 	resChan := make(chan pageData, numPages)
+	errChan := make(chan error, 1)
 	var wg sync.WaitGroup
 
-	// Limitador de concorrência (usa o número de CPUs disponíveis)
+	// Limita concorrência para evitar estouro de RAM com imagens grandes
 	semaphore := make(chan struct{}, runtime.NumCPU())
 
 	for i := 0; i < numPages; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			semaphore <- struct{}{}        // Adquire slot
-			defer func() { <-semaphore }() // Libera slot
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
 
-			img, err := doc.Image(idx)
-			if err == nil {
-				inverted := fastInvert(img)
-				resChan <- pageData{index: idx, img: inverted}
+			baseImg, err := doc.Image(idx)
+			if err != nil {
+				select {
+				case errChan <- err:
+				default:
+				}
+				return
 			}
+
+			var img image.Image = baseImg
+			if scaleFactor != 1 {
+				img = scaleImage(img, scaleFactor)
+			}
+			inverted := fastInvert(img)
+			resChan <- pageData{index: idx, img: inverted}
 		}(i)
 	}
 
-	// Fecha o canal quando terminar de processar
 	go func() {
 		wg.Wait()
 		close(resChan)
 	}()
 
-	// Coleta os resultados mantendo a ordem original
 	for p := range resChan {
 		pages[p.index] = p.img
+	}
+
+	select {
+	case err := <-errChan:
+		return nil, err
+	default:
 	}
 
 	// Reconstrói o PDF
@@ -111,7 +148,15 @@ func processAndInvert(tempPath string) (*bytes.Buffer, error) {
 			continue
 		}
 
-		// Detecta orientação original da página processada
+		// As dimensões retornadas pelo ImageScale são em Pixels.
+		// O gopdf usa Pontos (Points) por padrão (1 pt = 1/72 inch).
+		// Precisamos ajustar o tamanho da página do PDF para bater com a imagem escalada,
+		// ou a imagem vai parecer "gigante" ou "minúscula" se não ajustarmos.
+
+		// Truque: O gopdf aceita o tamanho em pontos.
+		// Se aumentamos a escala da imagem (ex: 2.0), ela tem mais pixels.
+		// Para ela caber na página visualmente igual a original, definimos a página
+		// com o tamanho dos pixels da imagem.
 		rect := img.Bounds()
 		w, h := float64(rect.Dx()), float64(rect.Dy())
 
@@ -119,12 +164,34 @@ func processAndInvert(tempPath string) (*bytes.Buffer, error) {
 			PageSize: &gopdf.Rect{W: w, H: h},
 		})
 
-		_ = pdf.ImageFrom(img, 0, 0, nil)
+		// Desenha a imagem ocupando toda a área da página
+		if err := pdf.ImageFrom(img, 0, 0, nil); err != nil {
+			return nil, err
+		}
 	}
 
 	var buf bytes.Buffer
-	pdf.WriteTo(&buf)
+	if _, err := pdf.WriteTo(&buf); err != nil {
+		return nil, err
+	}
 	return &buf, nil
+}
+
+func scaleImage(src image.Image, factor float64) image.Image {
+	bounds := src.Bounds()
+	if factor <= 0 {
+		return src
+	}
+
+	newW := int(float64(bounds.Dx()) * factor)
+	newH := int(float64(bounds.Dy()) * factor)
+	if newW <= 0 || newH <= 0 {
+		return src
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, xdraw.Over, nil)
+	return dst
 }
 
 // fastInvert usa manipulação direta de memória para ser ultra rápido
